@@ -1,10 +1,3 @@
-//
-//  ChatsSettingsView.swift
-//  fullmoon
-//
-//  Created by Jordan Singer on 10/6/24.
-//
-
 import SwiftUI
 
 struct ChatsSettingsView: View {
@@ -13,38 +6,37 @@ struct ChatsSettingsView: View {
     @State var systemPrompt = ""
     @State var deleteAllChats = false
     @Binding var currentThread: Thread?
-    
+
     var body: some View {
         List {
-            Section(header: Text("system prompt")) {
+            Section(header: Text("System Prompt")) {
                 TextEditor(text: $appManager.systemPrompt)
             }
-            
-            Section {
-                Toggle("haptics", isOn: $appManager.shouldPlayHaptics)
+            // Add this section if needed
+            Section(header: Text("Preferences")) {
+                Toggle("Enable Haptics", isOn: $appManager.shouldPlayHaptics)
             }
-            
             Section {
                 Button {
                     deleteAllChats.toggle()
                 } label: {
-                    Label("delete all chats", systemImage: "trash")
+                    Label("Delete All Chats", systemImage: "trash")
                         .foregroundStyle(.red)
                 }
-                .alert("are you sure?", isPresented: $deleteAllChats) {
-                    Button("cancel", role: .cancel) {
+                .alert("Are you sure?", isPresented: $deleteAllChats) {
+                    Button("Cancel", role: .cancel) {
                         deleteAllChats = false
                     }
-                    Button("delete", role: .destructive) {
+                    Button("Delete", role: .destructive) {
                         deleteChats()
                     }
                 }
             }
         }
-        .navigationTitle("chats")
+        .navigationTitle("Chats")
         .navigationBarTitleDisplayMode(.inline)
     }
-    
+
     func deleteChats() {
         do {
             currentThread = nil

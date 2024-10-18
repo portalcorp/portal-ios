@@ -8,57 +8,123 @@
 import SwiftUI
 import SwiftData
 
+struct HostedModel: Codable, Hashable {
+    var name: String
+    var endpoint: String
+}
+
+enum ModelSelection: Codable {
+    case local(name: String)
+    case hosted(model: HostedModel)
+}
+
 class AppManager: ObservableObject {
     @AppStorage("systemPrompt") var systemPrompt = "you are a helpful assistant"
     @AppStorage("appTintColor") var appTintColor: AppTintColor = .monochrome
     @AppStorage("appFontDesign") var appFontDesign: AppFontDesign = .standard
     @AppStorage("appFontSize") var appFontSize: AppFontSize = .medium
     @AppStorage("appFontWidth") var appFontWidth: AppFontWidth = .standard
-    @AppStorage("currentModelName") var currentModelName: String?
-    @AppStorage("shouldPlayHaptics") var shouldPlayHaptics = false
-        
+    @AppStorage("shouldPlayHaptics") var shouldPlayHaptics = true
+
+    @Published var currentModel: ModelSelection? {
+        didSet {
+            saveCurrentModelToUserDefaults()
+        }
+    }
+
     private let installedModelsKey = "installedModels"
-        
+    private let hostedModelsKey = "hostedModels"
+    private let currentModelKey = "currentModel"
+
     @Published var installedModels: [String] = [] {
         didSet {
             saveInstalledModelsToUserDefaults()
         }
     }
-    
+
+    @Published var hostedModels: [HostedModel] = [] {
+        didSet {
+            saveHostedModelsToUserDefaults()
+        }
+    }
+
     init() {
         loadInstalledModelsFromUserDefaults()
+        loadHostedModelsFromUserDefaults()
+        loadCurrentModelFromUserDefaults()
     }
-        
-    // Function to save the array to UserDefaults as JSON
+
+    // Add this computed property to get the display name of the current model
+    var currentModelNameDisplay: String {
+        if let currentModel = currentModel {
+            switch currentModel {
+            case .local(let name):
+                return modelDisplayName(name)
+            case .hosted(let hostedModel):
+                return hostedModel.name
+            }
+        } else {
+            return ""
+        }
+    }
+
     private func saveInstalledModelsToUserDefaults() {
         if let jsonData = try? JSONEncoder().encode(installedModels) {
             UserDefaults.standard.set(jsonData, forKey: installedModelsKey)
         }
     }
-    
-    // Function to load the array from UserDefaults
+
     private func loadInstalledModelsFromUserDefaults() {
         if let jsonData = UserDefaults.standard.data(forKey: installedModelsKey),
            let decodedArray = try? JSONDecoder().decode([String].self, from: jsonData) {
             self.installedModels = decodedArray
         } else {
-            self.installedModels = [] // Default to an empty array if there's no data
+            self.installedModels = []
         }
     }
-    
-    func playHaptic() {
-        if shouldPlayHaptics {
-            let impact = UIImpactFeedbackGenerator(style: .soft)
-            impact.impactOccurred()
+
+    private func saveHostedModelsToUserDefaults() {
+        if let jsonData = try? JSONEncoder().encode(hostedModels) {
+            UserDefaults.standard.set(jsonData, forKey: hostedModelsKey)
         }
     }
-    
+
+    private func loadHostedModelsFromUserDefaults() {
+        if let jsonData = UserDefaults.standard.data(forKey: hostedModelsKey),
+           let decodedArray = try? JSONDecoder().decode([HostedModel].self, from: jsonData) {
+            self.hostedModels = decodedArray
+        } else {
+            self.hostedModels = []
+        }
+    }
+
+    private func saveCurrentModelToUserDefaults() {
+        if let data = try? JSONEncoder().encode(currentModel) {
+            UserDefaults.standard.set(data, forKey: currentModelKey)
+        }
+    }
+
+    private func loadCurrentModelFromUserDefaults() {
+        if let data = UserDefaults.standard.data(forKey: currentModelKey),
+           let model = try? JSONDecoder().decode(ModelSelection.self, from: data) {
+            self.currentModel = model
+        } else {
+            self.currentModel = nil
+        }
+    }
+
     func addInstalledModel(_ model: String) {
         if !installedModels.contains(model) {
             installedModels.append(model)
         }
     }
-    
+
+    func addHostedModel(_ model: HostedModel) {
+        if !hostedModels.contains(model) {
+            hostedModels.append(model)
+        }
+    }
+
     func modelDisplayName(_ modelName: String) -> String {
         return modelName.replacingOccurrences(of: "mlx-community/", with: "").lowercased()
     }
@@ -113,9 +179,9 @@ class Message {
     var role: Role
     var content: String
     var timestamp: Date
-    
+
     @Relationship(inverse: \Thread.messages) var thread: Thread?
-    
+
     init(role: Role, content: String, thread: Thread? = nil) {
         self.id = UUID()
         self.role = role
@@ -130,13 +196,13 @@ class Thread {
     @Attribute(.unique) var id: UUID
     var title: String?
     var timestamp: Date
-    
+
     @Relationship var messages: [Message] = []
-    
+
     var sortedMessages: [Message] {
         return messages.sorted { $0.timestamp < $1.timestamp }
     }
-    
+
     init() {
         self.id = UUID()
         self.timestamp = Date()
@@ -145,88 +211,88 @@ class Thread {
 
 enum AppTintColor: String, CaseIterable {
     case monochrome, blue, brown, gray, green, indigo, mint, orange, pink, purple, red, teal, yellow
-    
+
     func getColor() -> Color {
         switch self {
         case .monochrome:
-            .primary
+            return .primary
         case .blue:
-            .blue
+            return .blue
         case .red:
-            .red
+            return .red
         case .green:
-            .green
+            return .green
         case .yellow:
-            .yellow
+            return .yellow
         case .brown:
-            .brown
+            return .brown
         case .gray:
-            .gray
+            return .gray
         case .indigo:
-            .indigo
+            return .indigo
         case .mint:
-            .mint
+            return .mint
         case .orange:
-            .orange
+            return .orange
         case .pink:
-            .pink
+            return .pink
         case .purple:
-            .purple
+            return .purple
         case .teal:
-            .teal
+            return .teal
         }
     }
 }
 
 enum AppFontDesign: String, CaseIterable {
     case standard, monospaced, rounded, serif
-    
+
     func getFontDesign() -> Font.Design {
         switch self {
         case .standard:
-            .default
+            return .default
         case .monospaced:
-            .monospaced
+            return .monospaced
         case .rounded:
-            .rounded
+            return .rounded
         case .serif:
-            .serif
+            return .serif
         }
     }
 }
 
 enum AppFontWidth: String, CaseIterable {
     case compressed, condensed, expanded, standard
-    
+
     func getFontWidth() -> Font.Width {
         switch self {
         case .compressed:
-            .compressed
+            return .compressed
         case .condensed:
-            .condensed
+            return .condensed
         case .expanded:
-            .expanded
+            return .expanded
         case .standard:
-            .standard
+            return .standard
         }
     }
 }
 
 enum AppFontSize: String, CaseIterable {
     case xsmall, small, medium, large, xlarge
-    
+
     func getFontSize() -> DynamicTypeSize {
         switch self {
         case .xsmall:
-            .xSmall
+            return .xSmall
         case .small:
-            .small
+            return .small
         case .medium:
-            .medium
+            return .medium
         case .large:
-            .large
+            return .large
         case .xlarge:
-            .xLarge
+            return .xLarge
         }
     }
 }

@@ -101,9 +101,7 @@ struct ChatsView: View {
     private func setCurrentThread(_ thread: Thread? = nil) {
         currentThread = thread
         isPromptFocused = true
-        dismiss()
-        appManager.playHaptic()
-    }
+        dismiss()    }
 }
 
 #Preview {

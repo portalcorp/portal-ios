@@ -10,7 +10,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var appManager: AppManager
     @Environment(\.dismiss) var dismiss
-    @Environment(LLMEvaluator.self) var llm
+    @EnvironmentObject var llm: LLMEvaluator
     @Binding var currentThread: Thread?
     
     var body: some View {
@@ -27,7 +27,7 @@ struct SettingsView: View {
                     
                     NavigationLink(destination: ModelsSettingsView()) {
                         Label("models", systemImage: "arrow.down.circle")
-                            .badge(appManager.modelDisplayName(appManager.currentModelName ?? ""))
+                            .badge(appManager.currentModelNameDisplay)
                     }
                 }
                 

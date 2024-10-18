@@ -1,10 +1,3 @@
-//
-//  OnboardingDownloadingModelProgressView.swift
-//  fullmoon
-//
-//  Created by Jordan Singer on 10/4/24.
-//
-
 import SwiftUI
 import MLXLLM
 
@@ -12,7 +5,7 @@ struct OnboardingDownloadingModelProgressView: View {
     @Binding var showOnboarding: Bool
     @EnvironmentObject var appManager: AppManager
     @Binding var selectedModel: ModelConfiguration
-    @Environment(LLMEvaluator.self) var llm
+    @EnvironmentObject var llm: LLMEvaluator
     @State var installed = false
     
     let moonPhases = [
@@ -38,7 +31,7 @@ struct OnboardingDownloadingModelProgressView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 64, height: 64)
                     .foregroundStyle(isInstalled() ? .green : .secondary)
-                    .onReceive(timer) { time in
+                    .onReceive(timer) { _ in
                         currentPhaseIndex = (currentPhaseIndex + 1) % moonPhases.count
                     }
                 
@@ -99,7 +92,8 @@ struct OnboardingDownloadingModelProgressView: View {
     }
     
     func loadLLM() async {
-        await llm.switchModel(selectedModel)
+        let modelSelection = ModelSelection.local(name: selectedModel.name)
+        await llm.switchModel(modelSelection)
     }
     
     func isInstalled() -> Bool {
@@ -112,7 +106,7 @@ struct OnboardingDownloadingModelProgressView: View {
     
     func addInstalledModel() {
         if isInstalled() {
-            appManager.currentModelName = selectedModel.name
+            appManager.currentModel = .local(name: selectedModel.name)
             appManager.addInstalledModel(selectedModel.name)
         }
     }
@@ -120,4 +114,6 @@ struct OnboardingDownloadingModelProgressView: View {
 
 #Preview {
     OnboardingDownloadingModelProgressView(showOnboarding: .constant(true), selectedModel: .constant(ModelConfiguration.defaultModel))
+        .environmentObject(AppManager())
+        .environmentObject(LLMEvaluator())
 }

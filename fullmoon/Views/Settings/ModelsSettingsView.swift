@@ -10,62 +10,91 @@ import MLXLLM
 
 struct ModelsSettingsView: View {
     @EnvironmentObject var appManager: AppManager
-    @Environment(LLMEvaluator.self) var llm
+    @EnvironmentObject var llm: LLMEvaluator
     @State var showOnboardingInstallModelView = false
-    
+    @State private var showAddHostedModelView = false
+
     var body: some View {
         List {
-            Section(header: Text("installed")) {
-                ForEach(appManager.installedModels, id: \.self) { modelName in
-                    Button {
-                        Task {
-                            await switchModel(modelName)
-                        }
-                    } label: {
-                        Label {
-                            Text(appManager.modelDisplayName(modelName))
-                                .tint(.primary)
-                        } icon: {
-                            Image(systemName: appManager.currentModelName == modelName ? "checkmark.circle.fill" : "circle")
-                        }
-                    }
-                }
-            }
             
             Button {
                 showOnboardingInstallModelView.toggle()
             } label: {
                 Label("install a model", systemImage: "arrow.down.circle.dotted")
             }
+
+            Section(header: Text("Installed")) {
+                ForEach(appManager.installedModels, id: \.self) { modelName in
+                    Button {
+                        Task {
+                            await switchModel(.local(name: modelName))
+                        }
+                    } label: {
+                        Label {
+                            Text(appManager.modelDisplayName(modelName))
+                                .tint(.primary)
+                        } icon: {
+                            Image(systemName: isCurrentModelLocal(modelName) ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
+            }
+
+            Section(header: Text("Hosted Models")) {
+                ForEach(appManager.hostedModels, id: \.self) { hostedModel in
+                    Button {
+                        Task {
+                            await switchModel(.hosted(model: hostedModel))
+                        }
+                    } label: {
+                        Label {
+                            Text(hostedModel.name)
+                                .tint(.primary)
+                        } icon: {
+                            Image(systemName: isCurrentModelHosted(hostedModel) ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
+                .onDelete(perform: deleteHostedModels)
+
+                Button {
+                    showAddHostedModelView.toggle()
+                } label: {
+                    Label("Add Hosted Model", systemImage: "plus")
+                }
+            }
         }
         .navigationTitle("models")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showOnboardingInstallModelView) {
-            NavigationStack {
-                OnboardingInstallModelView(showOnboarding: $showOnboardingInstallModelView)
-                    .environment(llm)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button(action: { showOnboardingInstallModelView = false }) {
-                                Image(systemName: "xmark")
-                            }
-                        }
-                    }
-            }
+        .sheet(isPresented: $showAddHostedModelView) {
+            AddHostedModelView()
+                .environmentObject(appManager)
+                .frame(minHeight: 400) // Set a minimum height for the sheet
         }
     }
-    
-    private func switchModel(_ modelName: String) async {
-        if let model = ModelConfiguration.availableModels.first(where: {
-            $0.name == modelName
-        }) {
-            appManager.currentModelName = modelName
-            appManager.playHaptic()
-            await llm.switchModel(model)
-        }
-    }
-}
 
-#Preview {
-    ModelsSettingsView()
+    private func switchModel(_ modelSelection: ModelSelection) async {
+        appManager.currentModel = modelSelection
+        let impact = UIImpactFeedbackGenerator(style: .soft)
+        impact.impactOccurred()
+        await llm.switchModel(modelSelection)
+    }
+
+    private func isCurrentModelLocal(_ modelName: String) -> Bool {
+        if case .local(let currentModelName) = appManager.currentModel {
+            return currentModelName == modelName
+        }
+        return false
+    }
+
+    private func isCurrentModelHosted(_ hostedModel: HostedModel) -> Bool {
+        if case .hosted(let currentHostedModel) = appManager.currentModel {
+            return currentHostedModel == hostedModel
+        }
+        return false
+    }
+
+    private func deleteHostedModels(at offsets: IndexSet) {
+        appManager.hostedModels.remove(atOffsets: offsets)
+    }
 }
