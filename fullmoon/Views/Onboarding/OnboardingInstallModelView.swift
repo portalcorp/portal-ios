@@ -1,19 +1,14 @@
-//
-//  OnboardingInstallModelView.swift
-//  fullmoon
-//
-//  Created by Jordan Singer on 10/4/24.
-//
-
 import SwiftUI
 import MLXLLM
 
 struct OnboardingInstallModelView: View {
     @EnvironmentObject var appManager: AppManager
+    @EnvironmentObject var llm: LLMEvaluator
     @Binding var showOnboarding: Bool
-    @State var selectedModel = ModelConfiguration.defaultModel
-    let suggestedModel = ModelConfiguration.defaultModel
-    
+
+    @State var selectedModel: ModelConfiguration? = nil
+    @State private var navigateToInstallProgress = false
+
     var body: some View {
         List {
             Section {
@@ -23,7 +18,7 @@ struct OnboardingInstallModelView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 64, height: 64)
                         .foregroundStyle(.primary, .tertiary)
-                    
+
                     VStack(spacing: 4) {
                         Text("install a model")
                             .font(.title)
@@ -37,83 +32,77 @@ struct OnboardingInstallModelView: View {
                 .frame(maxWidth: .infinity)
             }
             .listRowBackground(Color.clear)
-            
-            if appManager.installedModels.count > 0 {
-                Section(header: Text("Installed")) {
-                    ForEach(appManager.installedModels, id: \.self) { modelName in
-                        Button { } label: {
-                            Label {
-                                Text(appManager.modelDisplayName(modelName))
-                            } icon: {
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                        .foregroundStyle(.secondary)
-                        .disabled(true)
-                    }
-                }
-            } else {
-                Section(header: Text("Suggested")) {
-                    Button { selectedModel = suggestedModel } label: {
-                        Label {
-                            Text(appManager.modelDisplayName(suggestedModel.name))
+
+            Section(header: Text("Available Models")) {
+                ForEach(ModelConfiguration.availableModels, id: \.name) { model in
+                    Button {
+                        selectedModel = model
+                    } label: {
+                        HStack {
+                            Image(systemName: modelIconName(for: model))
+                            Text(appManager.modelDisplayName(model.name))
                                 .tint(.primary)
-                        } icon: {
-                            Image(systemName: selectedModel.name == suggestedModel.name ? "checkmark.circle.fill" : "circle")
-                        }
-                    }
-                }
-            }
-            
-            if filteredModels.count > 0 {
-                Section(header: Text("Other")) {
-                    ForEach(filteredModels, id: \.name) { model in
-                        Button { selectedModel = model } label: {
-                            Label {
-                                Text(appManager.modelDisplayName(model.name))
-                                    .tint(.primary)
-                            } icon: {
-                                Image(systemName: selectedModel.name == model.name ? "checkmark.circle.fill" : "circle")
+                            Spacer()
+                            if isInstalled(model) {
+                                Text("installed")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
                 }
             }
         }
+        .navigationTitle("Install Model")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel") {
+                    showOnboarding = false
+                }
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink(destination: OnboardingDownloadingModelProgressView(showOnboarding: $showOnboarding, selectedModel: $selectedModel)) {
+                NavigationLink(
+                    destination: OnboardingDownloadingModelProgressView(
+                        showOnboarding: $showOnboarding,
+                        selectedModel: .constant(selectedModel ?? ModelConfiguration.defaultModel)
+                    )
+                    .environmentObject(appManager)
+                    .environmentObject(llm),
+                    isActive: $navigateToInstallProgress
+                ) {
                     Text("install")
                         .font(.headline)
                 }
-                .disabled(filteredModels.isEmpty)
-            }
-        }
-        .listStyle(.insetGrouped)
-        .task {
-            checkModels()
-        }
-    }
-    
-    var filteredModels: [ModelConfiguration] {
-        ModelConfiguration.availableModels
-            .filter { !appManager.installedModels.contains($0.name) }
-            .filter { model in
-                !(appManager.installedModels.isEmpty && model.name == suggestedModel.name)
-            }
-            .sorted { $0.name < $1.name }
-    }
-    
-    func checkModels() {
-        // automatically select the first available model
-        if appManager.installedModels.contains(suggestedModel.name) {
-            if let model = filteredModels.first {
-                selectedModel = model
+                .disabled(!canInstallSelectedModel)
+                .onChange(of: selectedModel) { _ in
+                    // If user picks a model, pressing "install" will navigate
+                    // but only if model not installed
+                }
+                .onTapGesture {
+                    if let selectedModel = selectedModel, !isInstalled(selectedModel) {
+                        navigateToInstallProgress = true
+                    }
+                }
             }
         }
     }
-}
 
-#Preview {
-    OnboardingInstallModelView(showOnboarding: .constant(true))
+    private var canInstallSelectedModel: Bool {
+        guard let selectedModel = selectedModel else { return false }
+        return !isInstalled(selectedModel)
+    }
+
+    private func isInstalled(_ model: ModelConfiguration) -> Bool {
+        return appManager.installedModels.contains(model.name)
+    }
+
+    private func modelIconName(for model: ModelConfiguration) -> String {
+        if selectedModel?.name == model.name {
+            return "checkmark.circle.fill"
+        } else {
+            return "circle"
+        }
+    }
 }

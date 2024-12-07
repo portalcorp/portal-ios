@@ -11,12 +11,14 @@ import MLXLLM
 struct ModelsSettingsView: View {
     @EnvironmentObject var appManager: AppManager
     @EnvironmentObject var llm: LLMEvaluator
-    @State var showOnboardingInstallModelView = false
+    @State private var showOnboardingInstallModelView = false
     @State private var showAddHostedModelView = false
+    
+    // New state for editing
+    @State private var modelToEdit: HostedModel? = nil
 
     var body: some View {
         List {
-            
             Button {
                 showOnboardingInstallModelView.toggle()
             } label: {
@@ -38,6 +40,7 @@ struct ModelsSettingsView: View {
                         }
                     }
                 }
+                .onDelete(perform: deleteLocalModels)
             }
 
             Section(header: Text("Hosted Models")) {
@@ -54,10 +57,25 @@ struct ModelsSettingsView: View {
                             Image(systemName: isCurrentModelHosted(hostedModel) ? "checkmark.circle.fill" : "circle")
                         }
                     }
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            deleteHostedModel(hostedModel)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+
+                        Button {
+                            modelToEdit = hostedModel
+                            showAddHostedModelView = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .tint(.blue)
+                    }
                 }
-                .onDelete(perform: deleteHostedModels)
 
                 Button {
+                    modelToEdit = nil
                     showAddHostedModelView.toggle()
                 } label: {
                     Label("Add Hosted Model", systemImage: "plus")
@@ -67,9 +85,28 @@ struct ModelsSettingsView: View {
         .navigationTitle("models")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showAddHostedModelView) {
-            AddHostedModelView()
+            NavigationStack {
+                AddHostedModelView(modelToEdit: modelToEdit) { updatedModel in
+                    if let modelToEdit = modelToEdit,
+                       let index = appManager.hostedModels.firstIndex(of: modelToEdit) {
+                        // Editing existing model
+                        appManager.hostedModels[index] = updatedModel
+                    } else {
+                        // Adding a new model
+                        appManager.addHostedModel(updatedModel)
+                    }
+                    modelToEdit = nil
+                }
                 .environmentObject(appManager)
-                .frame(minHeight: 400) // Set a minimum height for the sheet
+            }
+            .frame(minHeight: 400)
+        }
+        .sheet(isPresented: $showOnboardingInstallModelView) {
+            NavigationStack {
+                OnboardingInstallModelView(showOnboarding: $showOnboardingInstallModelView)
+                    .environmentObject(appManager)
+                    .environmentObject(llm)
+            }
         }
     }
 
@@ -94,7 +131,22 @@ struct ModelsSettingsView: View {
         return false
     }
 
-    private func deleteHostedModels(at offsets: IndexSet) {
-        appManager.hostedModels.remove(atOffsets: offsets)
+    private func deleteLocalModels(at offsets: IndexSet) {
+        for index in offsets {
+            let modelName = appManager.installedModels[index]
+            if isCurrentModelLocal(modelName) {
+                appManager.currentModel = nil
+            }
+        }
+        appManager.installedModels.remove(atOffsets: offsets)
+    }
+
+    private func deleteHostedModel(_ hostedModel: HostedModel) {
+        if let index = appManager.hostedModels.firstIndex(of: hostedModel) {
+            if isCurrentModelHosted(hostedModel) {
+                appManager.currentModel = nil
+            }
+            appManager.hostedModels.remove(at: index)
+        }
     }
 }

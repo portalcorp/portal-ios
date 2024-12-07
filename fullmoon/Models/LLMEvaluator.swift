@@ -152,9 +152,9 @@ class LLMEvaluator: ObservableObject {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let sessionDelegate = SSESessionDelegate { [weak self] event in
+        let sessionDelegate = SSESessionDelegate { [weak self] eventContent in
             Task { @MainActor in
-                self?.output += event
+                self?.output += eventContent
             }
         }
 
@@ -199,13 +199,48 @@ class SSESessionDelegate: NSObject, URLSessionDataDelegate {
         }
     }
 
+    // Define the structs to parse the SSE JSON chunks
+    struct ChatCompletionChunk: Decodable {
+        let id: String
+        let object: String
+        let created: Int
+        let model: String
+        let choices: [ChunkChoice]
+    }
+
+    struct ChunkChoice: Decodable {
+        let index: Int
+        let delta: Delta
+        let logprobs: String?
+        let finish_reason: String?
+    }
+
+    struct Delta: Decodable {
+        let role: String?
+        let content: String?
+    }
+
     func parseSSE(data: String) -> [String] {
         let lines = data.components(separatedBy: "\n")
         var events: [String] = []
         for line in lines {
             if line.hasPrefix("data: ") {
                 let eventData = String(line.dropFirst(6))
-                events.append(eventData)
+                // Check for the [DONE] event
+                if eventData == "[DONE]" {
+                    continue
+                }
+
+                // Try to decode the JSON chunk
+                if let jsonData = eventData.data(using: .utf8),
+                   let chunk = try? JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData) {
+                    // Extract content from each choice
+                    for choice in chunk.choices {
+                        if let content = choice.delta.content, !content.isEmpty {
+                            events.append(content)
+                        }
+                    }
+                }
             }
         }
         return events

@@ -27,8 +27,9 @@ struct SettingsView: View {
                     
                     NavigationLink(destination: ModelsSettingsView()) {
                         Label("models", systemImage: "arrow.down.circle")
-                            .badge(appManager.currentModelNameDisplay)
+                            .badge(truncatedModelName(appManager.currentModelNameDisplay))
                     }
+
                 }
                 
                 Section {
@@ -62,6 +63,18 @@ struct SettingsView: View {
         .environment(\.dynamicTypeSize, appManager.appFontSize.getFontSize())
     }
 }
+
+extension SettingsView {
+    func truncatedModelName(_ name: String, maxLength: Int = 20) -> String {
+        if name.count > maxLength {
+            let endIndex = name.index(name.startIndex, offsetBy: maxLength)
+            return String(name[..<endIndex]) + "…"
+        } else {
+            return name
+        }
+    }
+}
+
 
 #Preview {
     SettingsView(currentThread: .constant(nil))
