@@ -37,18 +37,23 @@ class LLMEvaluator: ObservableObject {
         loadState = .idle
         currentModelSelection = modelSelection
         do {
+            print("[LLMEvaluator] switchModel(...) called with: \(modelSelection)")
             try await load(modelSelection: modelSelection)
         } catch {
-            // Handle error
+            // If local load fails, we handle it in generate.
+            print("[LLMEvaluator] switchModel error: \(error.localizedDescription)")
+            self.output = "Error: \(error.localizedDescription)"
         }
     }
 
     func load(modelSelection: ModelSelection) async throws {
+        print("[LLMEvaluator] load(...) called for \(modelSelection)")
         switch modelSelection {
         case .local(let modelName):
             try await loadLocalModel(modelName: modelName)
-        case .hosted(_):
-            // No loading needed for hosted models
+        case .hosted:
+            // Hosted models do not require local loading
+            print("[LLMEvaluator] Hosted model does not require local load.")
             break
         }
     }
@@ -60,30 +65,41 @@ class LLMEvaluator: ObservableObject {
 
         switch loadState {
         case .idle:
+            print("[LLMEvaluator] Begin loading local model: \(modelConfiguration.id)")
             MLX.GPU.set(cacheLimit: 20 * 1024 * 1024)
 
             let modelContainer = try await MLXLLM.loadModelContainer(configuration: modelConfiguration) { progress in
                 Task { @MainActor in
                     self.modelInfo = "Downloading \(modelConfiguration.name): \(Int(progress.fractionCompleted * 100))%"
                     self.progress = progress.fractionCompleted
+                    print("[LLMEvaluator] Download progress: \(self.progress)")
                 }
             }
-            self.modelInfo = "Loaded \(modelConfiguration.id).  Weights: \(MLX.GPU.activeMemory / 1024 / 1024)M"
+            self.modelInfo = "Loaded \(modelConfiguration.id). Weights: \(MLX.GPU.activeMemory / 1024 / 1024)M"
+            print("[LLMEvaluator] Finished loading local model: \(modelConfiguration.id)")
             loadState = .loaded(modelContainer, modelConfiguration)
 
-        case .loaded(_, _):
-            // Model is already loaded
+        case .loaded:
+            // Already loaded
+            print("[LLMEvaluator] Model already loaded, skipping.")
             break
         }
     }
 
     func generate(modelSelection: ModelSelection, thread: Thread, systemPrompt: String) async -> String {
-        guard !running else { return "" }
+        print("[LLMEvaluator] generate(...) invoked. ModelSelection: \(modelSelection)")
+        guard !running else {
+            print("[LLMEvaluator] generate(...) aborted, already running.")
+            return ""
+        }
         running = true
         self.output = ""
+        defer { running = false } // ensures `running` is reset even on errors
+
         do {
             switch modelSelection {
             case .local(let modelName):
+                print("[LLMEvaluator] (Local) Checking if model is loaded...")
                 try await loadLocalModel(modelName: modelName)
                 guard case let .loaded(modelContainer, modelConfiguration) = loadState else {
                     throw NSError(domain: "Model not loaded", code: 0, userInfo: nil)
@@ -92,49 +108,64 @@ class LLMEvaluator: ObservableObject {
 
                 let promptHistory = modelConfiguration.getPromptHistory(thread: thread, systemPrompt: systemPrompt)
                 let prompt = modelConfiguration.prepare(prompt: promptHistory)
+                print("[LLMEvaluator] local prompt prepared.")
 
                 let promptTokens = await modelContainer.perform { _, tokenizer in
                     tokenizer.encode(text: prompt)
                 }
+                print("[LLMEvaluator] prompt tokenized. Token count = \(promptTokens.count)")
 
                 MLXRandom.seed(UInt64(Date.timeIntervalSinceReferenceDate * 1000))
 
+                print("[LLMEvaluator] Starting token generation (local) ...")
                 let result = await modelContainer.perform { model, tokenizer in
                     MLXLLM.generate(
-                        promptTokens: promptTokens, parameters: generateParameters, model: model,
-                        tokenizer: tokenizer, extraEOSTokens: extraEOSTokens
+                        promptTokens: promptTokens,
+                        parameters: generateParameters,
+                        model: model,
+                        tokenizer: tokenizer,
+                        extraEOSTokens: extraEOSTokens
                     ) { tokens in
-                        if tokens.count % displayEveryNTokens == 0 {
-                            let text = tokenizer.decode(tokens: tokens)
+                        // partial streaming tokens
+                        if tokens.count % self.displayEveryNTokens == 0 {
+                            let partial = tokenizer.decode(tokens: tokens)
                             Task { @MainActor in
-                                self.output = text
+                                self.output = partial
                             }
                         }
-                        if tokens.count >= maxTokens {
+                        if tokens.count >= self.maxTokens {
                             return .stop
-                        } else {
-                            return .more
                         }
+                        return .more
                     }
                 }
-
+                // Complete final output
                 if result.output != self.output {
                     self.output = result.output
                 }
-                self.stat = " Tokens/second: \(String(format: "%.3f", result.tokensPerSecond))"
+                self.stat = " Tokens/s: \(String(format: "%.3f", result.tokensPerSecond))"
+                print("[LLMEvaluator] local generation complete. Output length: \(self.output.count)")
+                return self.output
 
             case .hosted(let hostedModel):
+                print("[LLMEvaluator] (Hosted) calling generateWithHostedModel for: \(hostedModel.name)")
                 let promptHistory = getPromptHistory(thread: thread, systemPrompt: systemPrompt)
-                try await generateWithHostedModel(hostedModel: hostedModel, promptHistory: promptHistory)
+                let finalText = try await generateWithHostedModel(hostedModel: hostedModel, promptHistory: promptHistory)
+                self.output = finalText
+                print("[LLMEvaluator] hosted generation complete. Output length: \(self.output.count)")
+                return self.output
             }
         } catch {
-            output = "Failed: \(error)"
+            let err = "Error: \(error.localizedDescription)"
+            print("[LLMEvaluator] generate(...) error: \(err)")
+            self.output = err
+            return self.output
         }
-        running = false
-        return output
     }
 
-    func generateWithHostedModel(hostedModel: HostedModel, promptHistory: String) async throws {
+    /// Return the final text so that ContentView can use it as a final assistant message
+    private func generateWithHostedModel(hostedModel: HostedModel, promptHistory: String) async throws -> String {
+        print("[LLMEvaluator] generateWithHostedModel(...) called. endpoint=\(hostedModel.endpoint)")
         guard let url = URL(string: hostedModel.endpoint) else {
             throw URLError(.badURL)
         }
@@ -152,14 +183,19 @@ class LLMEvaluator: ObservableObject {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
 
-        let sessionDelegate = SSESessionDelegate { [weak self] eventContent in
-            Task { @MainActor in
-                self?.output += eventContent
+        // We'll store partial output in a local variable
+        var combinedOutput = ""
+
+        let sessionDelegate = SSESessionDelegate { eventContent in
+            Task { @MainActor [weak self] in
+                combinedOutput += eventContent
+                print("[LLMEvaluator][SSESessionDelegate] partial eventContent: \(eventContent)")
+                self?.output = combinedOutput
             }
         }
-
         let session = URLSession(configuration: .default, delegate: sessionDelegate, delegateQueue: nil)
         let task = session.dataTask(with: request)
+        print("[LLMEvaluator] Sending SSE request to \(hostedModel.endpoint)")
         task.resume()
 
         try await withTaskCancellationHandler {
@@ -167,6 +203,9 @@ class LLMEvaluator: ObservableObject {
         } operation: {
             await sessionDelegate.waitForCompletion()
         }
+
+        // Return final result (may include "Error: ..." if SSE had an error)
+        return combinedOutput
     }
 
     func getPromptHistory(thread: Thread, systemPrompt: String) -> String {
@@ -190,16 +229,38 @@ class SSESessionDelegate: NSObject, URLSessionDataDelegate {
         self.onEvent = onEvent
     }
 
+    // A small struct to decode the raw error if needed
+    struct ErrorJSON: Decodable {
+        let object: String?
+        let message: String?
+        let type: String?
+        let code: Int?
+    }
+
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        if let eventString = String(data: data, encoding: .utf8) {
-            let events = parseSSE(data: eventString)
-            for event in events {
-                onEvent(event)
+        guard let eventString = String(data: data, encoding: .utf8) else { return }
+        print("[SSESessionDelegate] didReceive data chunk: \(eventString)")
+
+        // Check if this might be a raw error JSON instead of SSE data
+        if !eventString.hasPrefix("data: ") {
+            // Attempt to parse as error JSON
+            if let jsonData = eventString.data(using: .utf8),
+               let errorObj = try? JSONDecoder().decode(ErrorJSON.self, from: jsonData),
+               errorObj.object == "error",
+               let msg = errorObj.message
+            {
+                onEvent("Error: \(msg)")
+                return
             }
+        }
+
+        // Otherwise handle it as SSE data
+        let events = parseSSE(data: eventString)
+        for event in events {
+            onEvent(event)
         }
     }
 
-    // Define the structs to parse the SSE JSON chunks
     struct ChatCompletionChunk: Decodable {
         let id: String
         let object: String
@@ -226,18 +287,14 @@ class SSESessionDelegate: NSObject, URLSessionDataDelegate {
         for line in lines {
             if line.hasPrefix("data: ") {
                 let eventData = String(line.dropFirst(6))
-                // Check for the [DONE] event
                 if eventData == "[DONE]" {
                     continue
                 }
-
-                // Try to decode the JSON chunk
                 if let jsonData = eventData.data(using: .utf8),
                    let chunk = try? JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData) {
-                    // Extract content from each choice
                     for choice in chunk.choices {
-                        if let content = choice.delta.content, !content.isEmpty {
-                            events.append(content)
+                        if let text = choice.delta.content, !text.isEmpty {
+                            events.append(text)
                         }
                     }
                 }
@@ -247,6 +304,13 @@ class SSESessionDelegate: NSObject, URLSessionDataDelegate {
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            let errText = "\nError: \(error.localizedDescription)"
+            print("[SSESessionDelegate] SSE stream completed with error: \(errText)")
+            onEvent(errText)
+        } else {
+            print("[SSESessionDelegate] SSE stream completed with no error.")
+        }
         completionContinuation?.resume()
     }
 
@@ -256,3 +320,4 @@ class SSESessionDelegate: NSObject, URLSessionDataDelegate {
         }
     }
 }
+

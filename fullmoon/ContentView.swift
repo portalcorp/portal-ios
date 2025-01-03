@@ -25,7 +25,7 @@ struct ContentView: View {
     @State private var counter: Int = 0
     @State private var origin: CGPoint = .zero
 
-    // State variables for image attachment
+    // For image attachment
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedUIImage: UIImage? = nil
 
@@ -36,9 +36,9 @@ struct ContentView: View {
                     .task {
                         isPromptFocused = true
                         if let currentModel = appManager.currentModel {
+                            // Pre-load if needed
+                            print("[ContentView] Attempting to load model on appear: \(currentModel)")
                             try? await llm.load(modelSelection: currentModel)
-                        } else {
-                            // No model selected
                         }
                     }
                     .gesture(
@@ -91,28 +91,28 @@ struct ContentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button(action: {
+                Button {
                     playHaptic()
                     showChats.toggle()
-                }) {
+                } label: {
                     Image(systemName: "list.bullet")
                 }
             }
 
             ToolbarItem(placement: .topBarLeading) {
-                Button(action: {
+                Button {
                     playHaptic()
                     createNewChat()
-                }) {
+                } label: {
                     Image(systemName: "plus")
                 }
             }
 
             ToolbarItem(placement: .topBarTrailing) {
-                Button(action: {
+                Button {
                     playHaptic()
                     showSettings.toggle()
-                }) {
+                } label: {
                     Image(systemName: "gear")
                 }
             }
@@ -122,6 +122,8 @@ struct ContentView: View {
     @ViewBuilder
     private var animatedBackground: some View {
         VStack(spacing: 0) {
+            MeshGradientView()
+                .ignoresSafeArea()
             Rectangle()
                 .frame(height: 50)
                 .foregroundStyle(.black)
@@ -180,7 +182,6 @@ struct ContentView: View {
                     .foregroundStyle(.quaternary)
                 Spacer()
             }
-
             inputBar(geometry: geometry)
         }
     }
@@ -195,6 +196,7 @@ struct ContentView: View {
                             .padding()
                     }
 
+                    // If the model is running and partial output exists
                     if llm.running && !llm.output.isEmpty {
                         HStack {
                             Text(try! AttributedString(markdown: llm.output.trimmingCharacters(in: .whitespacesAndNewlines) + " ◐",
@@ -207,7 +209,6 @@ struct ContentView: View {
                         .padding()
                     }
                 }
-
                 Rectangle()
                     .fill(.clear)
                     .frame(height: 1)
@@ -229,26 +230,41 @@ struct ContentView: View {
             if message.role == .user {
                 Spacer()
             }
-
             VStack(alignment: .leading, spacing: 8) {
-                Text(
-                    try! AttributedString(
-                        markdown: message.content.trimmingCharacters(in: .whitespacesAndNewlines),
+                // If assistant's text starts with "Error:", show red background
+                if message.role == .assistant, message.content.hasPrefix("Error:") {
+                    Text(try! AttributedString(
+                        markdown: message.content,
                         options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                    ))
+                    .bold() // Make error text bold
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color.red.opacity(0.2))
+                    .mask(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                } else {
+                    Text(
+                        try! AttributedString(
+                            markdown: message.content.trimmingCharacters(in: .whitespacesAndNewlines),
+                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                        )
                     )
-                )
-                .textSelection(.enabled)
-                .if(message.role == .user) { view in
-                    view
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial)
-                        .mask(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .strokeBorder(.white.opacity(0.1), lineWidth: 1.5)
-                        }
+                    .textSelection(.enabled)
+                    .if(message.role == .user) { view in
+                        view
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(.ultraThinMaterial)
+                            .mask(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.1), lineWidth: 1.5)
+                            }
+                    }
                 }
+
+                // If it was an image
                 if message.content == "<image attached>", let uiImage = selectedUIImage {
                     Image(uiImage: uiImage)
                         .resizable()
@@ -301,19 +317,25 @@ struct ContentView: View {
                             .submitLabel(.send)
                     }
 
-                Button {
-                    origin = CGPoint(x: geometry.size.width, y: geometry.size.height)
-                    counter += 1
-                    generate()
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 24, height: 24)
-                        .offset(x: 2.5)
+                // If model is running, show spinner
+                if llm.running {
+                    ProgressView()
+                        .padding(.trailing)
+                } else {
+                    Button {
+                        origin = CGPoint(x: geometry.size.width, y: geometry.size.height)
+                        counter += 1
+                        generate()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 24, height: 24)
+                            .offset(x: 2.5)
+                    }
+                    .disabled(llm.running || prompt.isEmpty)
+                    .padding(.trailing)
                 }
-                .disabled(llm.running || prompt.isEmpty)
-                .padding(.trailing)
             }
             .frame(height: 48)
             .background(
@@ -340,9 +362,9 @@ struct ContentView: View {
                         modelContext.insert(newThread)
                         try? modelContext.save()
                     }
-
                     if let currentThread = currentThread {
                         sendMessage(Message(role: .user, content: "<image attached>", thread: currentThread))
+                        print("[ContentView] User attached an image to thread: \(currentThread.id)")
                     }
                 }
             }
@@ -354,33 +376,40 @@ struct ContentView: View {
         return modelName.isEmpty ? "fullmoon" : modelName
     }
 
-    /// Updated createNewChat function
     private func createNewChat() {
-        // Instead of creating and saving a new empty Thread right away, just reset the current thread.
         currentThread = nil
         isPromptFocused = true
     }
 
     private func generate() {
-        if !prompt.isEmpty {
-            if currentThread == nil {
-                let newThread = Thread()
-                currentThread = newThread
-                modelContext.insert(newThread)
-                try? modelContext.save()
-            }
+        guard !prompt.isEmpty else { return }
+        print("[ContentView] generate() called with prompt: \(prompt)")
 
-            if let currentThread = currentThread {
-                let messageContent = prompt
-                prompt = ""
-                playHaptic()
-                sendMessage(Message(role: .user, content: messageContent, thread: currentThread))
-                isPromptFocused = true
-                Task {
-                    if let currentModel = appManager.currentModel {
-                        let output = await llm.generate(modelSelection: currentModel, thread: currentThread, systemPrompt: appManager.systemPrompt)
-                        sendMessage(Message(role: .assistant, content: output, thread: currentThread))
-                    }
+        if currentThread == nil {
+            let newThread = Thread()
+            currentThread = newThread
+            modelContext.insert(newThread)
+            try? modelContext.save()
+        }
+
+        if let currentThread = currentThread {
+            let userMessage = Message(role: .user, content: prompt, thread: currentThread)
+            prompt = ""
+            playHaptic()
+            sendMessage(userMessage)
+            print("[ContentView] Sent user message: \(userMessage.content) to thread: \(currentThread.id)")
+            isPromptFocused = true
+
+            Task {
+                if let currentModel = appManager.currentModel {
+                    print("[ContentView] Calling llm.generate(...) with model: \(currentModel)")
+                    let output = await llm.generate(
+                        modelSelection: currentModel,
+                        thread: currentThread,
+                        systemPrompt: appManager.systemPrompt
+                    )
+                    print("[ContentView] Generation task complete. Output: \(output)")
+                    sendMessage(Message(role: .assistant, content: output, thread: currentThread))
                 }
             }
         }
@@ -388,14 +417,17 @@ struct ContentView: View {
 
     private func sendMessage(_ message: Message) {
         playHaptic()
+        print("[ContentView] Inserting message with role: \(message.role), content: \(message.content)")
         modelContext.insert(message)
         try? modelContext.save()
     }
 
     func playHaptic() {
         #if !os(visionOS)
-        let impact = UIImpactFeedbackGenerator(style: .soft)
-        impact.impactOccurred()
+        if appManager.shouldPlayHaptics {
+            let impact = UIImpactFeedbackGenerator(style: .soft)
+            impact.impactOccurred()
+        }
         #endif
     }
 

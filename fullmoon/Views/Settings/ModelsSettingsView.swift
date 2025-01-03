@@ -1,28 +1,26 @@
-//
-//  ModelsSettingsView.swift
-//  fullmoon
-//
-//  Created by Jordan Singer on 10/5/24.
-//
-
 import SwiftUI
 import MLXLLM
 
 struct ModelsSettingsView: View {
     @EnvironmentObject var appManager: AppManager
     @EnvironmentObject var llm: LLMEvaluator
-    @State private var showOnboardingInstallModelView = false
-    @State private var showAddHostedModelView = false
-    
-    // New state for editing
-    @State private var modelToEdit: HostedModel? = nil
+
+    // Separate flags for local vs. hosted flows:
+    @State private var showInstallLocalModelSheet = false
+
+    // For "Add or Edit" hosted model
+    @State private var hostedModelToEdit: HostedModel? = nil  // .sheet(item:) uses an Identifiable type
 
     var body: some View {
         List {
-            Button {
-                showOnboardingInstallModelView.toggle()
-            } label: {
-                Label("install a model", systemImage: "arrow.down.circle.dotted")
+            // ============== LOCAL MODELS SECTION ==============
+            Section {
+                Button {
+                    // Show local "InstallModelView"
+                    showInstallLocalModelSheet = true
+                } label: {
+                    Label("Install a model", systemImage: "arrow.down.circle.dotted")
+                }
             }
 
             Section(header: Text("Installed")) {
@@ -34,7 +32,6 @@ struct ModelsSettingsView: View {
                     } label: {
                         Label {
                             Text(appManager.modelDisplayName(modelName))
-                                .tint(.primary)
                         } icon: {
                             Image(systemName: isCurrentModelLocal(modelName) ? "checkmark.circle.fill" : "circle")
                         }
@@ -43,8 +40,9 @@ struct ModelsSettingsView: View {
                 .onDelete(perform: deleteLocalModels)
             }
 
+            // ============== HOSTED MODELS SECTION ==============
             Section(header: Text("Hosted Models")) {
-                ForEach(appManager.hostedModels, id: \.self) { hostedModel in
+                ForEach(appManager.hostedModels, id: \.id) { hostedModel in
                     Button {
                         Task {
                             await switchModel(.hosted(model: hostedModel))
@@ -52,7 +50,6 @@ struct ModelsSettingsView: View {
                     } label: {
                         Label {
                             Text(hostedModel.name)
-                                .tint(.primary)
                         } icon: {
                             Image(systemName: isCurrentModelHosted(hostedModel) ? "checkmark.circle.fill" : "circle")
                         }
@@ -63,10 +60,9 @@ struct ModelsSettingsView: View {
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
-
                         Button {
-                            modelToEdit = hostedModel
-                            showAddHostedModelView = true
+                            // We want to edit this model
+                            hostedModelToEdit = hostedModel
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -75,8 +71,9 @@ struct ModelsSettingsView: View {
                 }
 
                 Button {
-                    modelToEdit = nil
-                    showAddHostedModelView.toggle()
+                    // Add brand-new hosted model
+                    // The id is generated automatically
+                    hostedModelToEdit = HostedModel(name: "", endpoint: "")
                 } label: {
                     Label("Add Hosted Model", systemImage: "plus")
                 }
@@ -84,32 +81,45 @@ struct ModelsSettingsView: View {
         }
         .navigationTitle("models")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showAddHostedModelView) {
+
+        // ============== SHEET FOR INSTALL MODEL ==============
+        .sheet(isPresented: $showInstallLocalModelSheet) {
             NavigationStack {
-                AddHostedModelView(modelToEdit: modelToEdit) { updatedModel in
-                    if let modelToEdit = modelToEdit,
-                       let index = appManager.hostedModels.firstIndex(of: modelToEdit) {
-                        // Editing existing model
-                        appManager.hostedModels[index] = updatedModel
-                    } else {
-                        // Adding a new model
-                        appManager.addHostedModel(updatedModel)
-                    }
-                    modelToEdit = nil
-                }
-                .environmentObject(appManager)
-            }
-            .frame(minHeight: 400)
-        }
-        .sheet(isPresented: $showOnboardingInstallModelView) {
-            NavigationStack {
-                OnboardingInstallModelView(showOnboarding: $showOnboardingInstallModelView)
+                InstallModelView()
                     .environmentObject(appManager)
                     .environmentObject(llm)
             }
         }
+
+        // ============== SHEET FOR ADD/EDIT HOSTED MODEL ==============
+        .sheet(item: $hostedModelToEdit) { model in
+            // If model.name is empty => "Add Hosted Model"
+            // Otherwise => "Edit Hosted Model"
+            NavigationStack {
+                AddHostedModelView(modelToEdit: model) { updatedModel in
+                    saveHostedModel(updatedModel)
+                }
+                .environmentObject(appManager)
+            }
+        }
     }
 
+    // MARK: - Save the updated or newly added model
+    private func saveHostedModel(_ updatedModel: HostedModel) {
+        // Try to find the old record by id
+        if let index = appManager.hostedModels.firstIndex(where: { $0.id == updatedModel.id }) {
+            // Overwrite in place
+            appManager.hostedModels[index] = updatedModel
+        } else {
+            // Add a new model
+            appManager.addHostedModel(updatedModel)
+        }
+
+        // Dismiss the sheet
+        hostedModelToEdit = nil
+    }
+
+    // MARK: - Switch model
     private func switchModel(_ modelSelection: ModelSelection) async {
         appManager.currentModel = modelSelection
         let impact = UIImpactFeedbackGenerator(style: .soft)
@@ -117,6 +127,7 @@ struct ModelsSettingsView: View {
         await llm.switchModel(modelSelection)
     }
 
+    // MARK: - Checking the current model
     private func isCurrentModelLocal(_ modelName: String) -> Bool {
         if case .local(let currentModelName) = appManager.currentModel {
             return currentModelName == modelName
@@ -126,11 +137,12 @@ struct ModelsSettingsView: View {
 
     private func isCurrentModelHosted(_ hostedModel: HostedModel) -> Bool {
         if case .hosted(let currentHostedModel) = appManager.currentModel {
-            return currentHostedModel == hostedModel
+            return currentHostedModel.id == hostedModel.id
         }
         return false
     }
 
+    // MARK: - Deletions
     private func deleteLocalModels(at offsets: IndexSet) {
         for index in offsets {
             let modelName = appManager.installedModels[index]
@@ -142,7 +154,7 @@ struct ModelsSettingsView: View {
     }
 
     private func deleteHostedModel(_ hostedModel: HostedModel) {
-        if let index = appManager.hostedModels.firstIndex(of: hostedModel) {
+        if let index = appManager.hostedModels.firstIndex(where: { $0.id == hostedModel.id }) {
             if isCurrentModelHosted(hostedModel) {
                 appManager.currentModel = nil
             }

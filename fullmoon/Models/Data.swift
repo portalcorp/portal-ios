@@ -8,10 +8,18 @@
 import SwiftUI
 import SwiftData
 
-struct HostedModel: Codable, Hashable {
+struct HostedModel: Codable, Hashable, Identifiable {
+    var id: UUID
     var name: String
     var endpoint: String
+
+    init(id: UUID = UUID(), name: String, endpoint: String) {
+        self.id = id
+        self.name = name
+        self.endpoint = endpoint
+    }
 }
+
 
 enum ModelSelection: Codable {
     case local(name: String)

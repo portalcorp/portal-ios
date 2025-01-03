@@ -1,49 +1,46 @@
 import SwiftUI
 
 struct AddHostedModelView: View {
-    @EnvironmentObject var appManager: AppManager
     @Environment(\.dismiss) var dismiss
     @State private var modelName: String
     @State private var endpoint: String
-    
-    // Optional model to edit, if provided
-    var modelToEdit: HostedModel?
+
+    var modelToEdit: HostedModel
     var onSave: (HostedModel) -> Void
 
-    init(modelToEdit: HostedModel? = nil, onSave: @escaping (HostedModel) -> Void) {
+    init(modelToEdit: HostedModel, onSave: @escaping (HostedModel) -> Void) {
         self.modelToEdit = modelToEdit
         self.onSave = onSave
-
-        if let modelToEdit = modelToEdit {
-            _modelName = State(initialValue: modelToEdit.name)
-            _endpoint = State(initialValue: modelToEdit.endpoint)
-        } else {
-            _modelName = State(initialValue: "")
-            _endpoint = State(initialValue: "")
-        }
+        _modelName = State(initialValue: modelToEdit.name)
+        _endpoint = State(initialValue: modelToEdit.endpoint)
     }
 
     var body: some View {
         Form {
             Section(header: Text("Model Information")) {
                 TextField("Model Name", text: $modelName)
+                    .autocapitalization(.none)
+                    .autocorrectionDisabled(true)
+
                 TextField("Endpoint URL", text: $endpoint)
                     .keyboardType(.URL)
                     .autocapitalization(.none)
                     .autocorrectionDisabled(true)
             }
         }
-        .navigationTitle(modelToEdit == nil ? "Add Hosted Model" : "Edit Hosted Model")
+        .navigationTitle(modelToEdit.name.isEmpty ? "Add Hosted Model" : "Edit Hosted Model")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") {
-                    dismiss()
-                }
+                Button("Cancel") { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(modelToEdit == nil ? "Add" : "Save") {
-                    let hostedModel = HostedModel(name: modelName, endpoint: endpoint)
-                    onSave(hostedModel)
+                Button(modelToEdit.name.isEmpty ? "Add" : "Save") {
+                    let updated = HostedModel(
+                        id: modelToEdit.id,  // keep the same id
+                        name: modelName,
+                        endpoint: endpoint
+                    )
+                    onSave(updated)
                     dismiss()
                 }
                 .disabled(modelName.isEmpty || endpoint.isEmpty)
