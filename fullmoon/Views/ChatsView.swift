@@ -97,11 +97,20 @@ struct ChatsView: View {
             modelContext.delete(thread)
         }
     }
+
+    @AppStorage("lastThreadId") private var lastThreadId: String = ""
     
     private func setCurrentThread(_ thread: Thread? = nil) {
-        currentThread = thread
-        isPromptFocused = true
-        dismiss()    }
+    currentThread = thread
+    // Save the thread ID so next time we open the app, we come back to this one
+    if let thread {
+        lastThreadId = thread.id.uuidString
+    } else {
+        lastThreadId = ""
+    }
+    isPromptFocused = true
+    dismiss()
+    }
 }
 
 #Preview {

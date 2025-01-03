@@ -11,15 +11,25 @@ import PhotosUI
 
 struct ContentView: View {
     private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
-    @EnvironmentObject var appManager: AppManager
+
+    // SwiftData references
     @Environment(\.modelContext) var modelContext
+    @Query(sort: \Thread.timestamp, order: .reverse) var threads: [Thread]
+
+    // Observables
+    @EnvironmentObject var appManager: AppManager
     @EnvironmentObject var llm: LLMEvaluator
+
+    // Some local state
     @State var showOnboarding = false
     @State var showSettings = false
     @State var showChats = false
     @State var prompt = ""
     @FocusState var isPromptFocused: Bool
+
+    // The current open thread
     @State var currentThread: Thread?
+
     @Namespace var bottomID
 
     @State private var counter: Int = 0
@@ -29,16 +39,18 @@ struct ContentView: View {
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedUIImage: UIImage? = nil
 
+    // To remember which thread was last used, so we can restore it on next launch
+    @AppStorage("lastThreadId") private var lastThreadId: String = ""
+
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 content(geometry: geometry)
+                    .id(currentThread?.modelSelection?.idString ?? "none")
                     .task {
-                        isPromptFocused = true
-                        if let currentModel = appManager.currentModel {
-                            // Pre-load if needed
-                            print("[ContentView] Attempting to load model on appear: \(currentModel)")
-                            try? await llm.load(modelSelection: currentModel)
+                        // Only load thread if we currently have none
+                        if currentThread == nil {
+                            await loadOrCreateThread()
                         }
                     }
                     .gesture(
@@ -61,7 +73,7 @@ struct ContentView: View {
                     .sheet(isPresented: $showSettings) {
                         SettingsView(currentThread: $currentThread)
                             .environmentObject(appManager)
-                            .environment(llm)
+                            .environmentObject(llm)
                             .presentationDragIndicator(.hidden)
                             .if(idiom == .phone) { view in
                                 view.presentationDetents([.medium])
@@ -79,6 +91,8 @@ struct ContentView: View {
             }
         }
     }
+
+    // MARK: - UI Layout
 
     @ViewBuilder
     private func content(geometry: GeometryProxy) -> some View {
@@ -98,7 +112,6 @@ struct ContentView: View {
                     Image(systemName: "list.bullet")
                 }
             }
-
             ToolbarItem(placement: .topBarLeading) {
                 Button {
                     playHaptic()
@@ -107,7 +120,6 @@ struct ContentView: View {
                     Image(systemName: "plus")
                 }
             }
-
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     playHaptic()
@@ -199,11 +211,15 @@ struct ContentView: View {
                     // If the model is running and partial output exists
                     if llm.running && !llm.output.isEmpty {
                         HStack {
-                            Text(try! AttributedString(markdown: llm.output.trimmingCharacters(in: .whitespacesAndNewlines) + " ◐",
-                                                       options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-                                .textSelection(.enabled)
-                                .multilineTextAlignment(.leading)
-                                .padding(.trailing, 48)
+                            Text(
+                                try! AttributedString(
+                                    markdown: llm.output.trimmingCharacters(in: .whitespacesAndNewlines) + " ◐",
+                                    options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                                )
+                            )
+                            .textSelection(.enabled)
+                            .multilineTextAlignment(.leading)
+                            .padding(.trailing, 48)
                             Spacer()
                         }
                         .padding()
@@ -231,13 +247,14 @@ struct ContentView: View {
                 Spacer()
             }
             VStack(alignment: .leading, spacing: 8) {
-                // If assistant's text starts with "Error:", show red background
                 if message.role == .assistant, message.content.hasPrefix("Error:") {
-                    Text(try! AttributedString(
-                        markdown: message.content,
-                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-                    ))
-                    .bold() // Make error text bold
+                    Text(
+                        try! AttributedString(
+                            markdown: message.content,
+                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+                        )
+                    )
+                    .bold()
                     .textSelection(.enabled)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -300,6 +317,7 @@ struct ContentView: View {
                             }
                     )
             }
+            // If user actually picks an image, we do create/insert a new thread if needed:
             .onChange(of: selectedPhotoItem) { newItem in
                 handleSelectedPhotoItem(newItem)
             }
@@ -350,32 +368,87 @@ struct ContentView: View {
         .padding()
     }
 
+    // MARK: - Photo handling
     private func handleSelectedPhotoItem(_ newItem: PhotosPickerItem?) {
         if let newItem {
             Task {
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let uiImage = UIImage(data: data) {
                     selectedUIImage = uiImage
+                    // If no thread yet, create one
                     if currentThread == nil {
                         let newThread = Thread()
-                        currentThread = newThread
+                        newThread.modelSelection = appManager.currentModel
                         modelContext.insert(newThread)
                         try? modelContext.save()
+                        currentThread = newThread
                     }
+                    // Insert a message for the image
                     if let currentThread = currentThread {
                         sendMessage(Message(role: .user, content: "<image attached>", thread: currentThread))
-                        print("[ContentView] User attached an image to thread: \(currentThread.id)")
                     }
                 }
             }
         }
     }
 
-    var chatTitle: String {
-        let modelName = appManager.currentModelNameDisplay
-        return modelName.isEmpty ? "fullmoon" : modelName
+    // MARK: - Thread initialization
+    private func loadOrCreateThread() async {
+        // 1) Attempt to restore from lastThreadId
+        if let uuid = UUID(uuidString: lastThreadId),
+           let foundThread = threads.first(where: { $0.id == uuid }) {
+            currentThread = foundThread
+        }
+        else if let firstThread = threads.first {
+            // 2) If no lastThread found, pick the first thread
+            currentThread = firstThread
+        }
+        else {
+            // 3) If no threads exist, do nothing for now. We'll create on first message.
+            currentThread = nil
+        }
+
+        // 4) If we have a thread with a selected model, try loading it
+        if let modelSel = currentThread?.modelSelection {
+            print("[ContentView] Attempting to load thread's model on appear: \(modelSel)")
+            try? await llm.load(modelSelection: modelSel)
+        }
+
+        // 5) Force a small toggle so SwiftUI sees the updated thread
+        forceRefreshThread()
     }
 
+    private func forceRefreshThread() {
+        let temp = currentThread
+        currentThread = nil
+        DispatchQueue.main.async {
+            currentThread = temp
+        }
+    }
+
+    // MARK: - Title, new chat, generating text
+
+    private var chatTitle: String {
+        guard let sel = currentThread?.modelSelection else {
+            // If no thread or no model, fallback to global if we want:
+            if let fallback = appManager.currentModel {
+                switch fallback {
+                case .local(let name): return appManager.modelDisplayName(name)
+                case .hosted(let hosted): return hosted.name
+                }
+            }
+            // Otherwise show "fullmoon"
+            return "fullmoon"
+        }
+        switch sel {
+        case .local(let name):
+            return appManager.modelDisplayName(name)
+        case .hosted(let hosted):
+            return hosted.name
+        }
+    }
+
+    // [UPDATED] Do not create a thread; just set currentThread = nil
     private func createNewChat() {
         currentThread = nil
         isPromptFocused = true
@@ -383,44 +456,40 @@ struct ContentView: View {
 
     private func generate() {
         guard !prompt.isEmpty else { return }
-        print("[ContentView] generate() called with prompt: \(prompt)")
 
+        // If there's no current thread, create & store one with the appManager's model
         if currentThread == nil {
             let newThread = Thread()
-            currentThread = newThread
+            newThread.modelSelection = appManager.currentModel
             modelContext.insert(newThread)
             try? modelContext.save()
+            currentThread = newThread
         }
 
-        if let currentThread = currentThread {
+        if let currentThread = currentThread, let modelSelection = currentThread.modelSelection {
             let userMessage = Message(role: .user, content: prompt, thread: currentThread)
             prompt = ""
             playHaptic()
             sendMessage(userMessage)
-            print("[ContentView] Sent user message: \(userMessage.content) to thread: \(currentThread.id)")
-            isPromptFocused = true
 
             Task {
-                if let currentModel = appManager.currentModel {
-                    print("[ContentView] Calling llm.generate(...) with model: \(currentModel)")
-                    let output = await llm.generate(
-                        modelSelection: currentModel,
-                        thread: currentThread,
-                        systemPrompt: appManager.systemPrompt
-                    )
-                    print("[ContentView] Generation task complete. Output: \(output)")
-                    sendMessage(Message(role: .assistant, content: output, thread: currentThread))
-                }
+                let output = await llm.generate(
+                    modelSelection: modelSelection,
+                    thread: currentThread,
+                    systemPrompt: appManager.systemPrompt
+                )
+                sendMessage(Message(role: .assistant, content: output, thread: currentThread))
             }
         }
     }
 
     private func sendMessage(_ message: Message) {
         playHaptic()
-        print("[ContentView] Inserting message with role: \(message.role), content: \(message.content)")
         modelContext.insert(message)
         try? modelContext.save()
     }
+
+    // MARK: - Misc
 
     func playHaptic() {
         #if !os(visionOS)
@@ -437,7 +506,10 @@ struct ContentView: View {
 }
 
 extension View {
-    @ViewBuilder func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+    @ViewBuilder func `if`<Content: View>(
+        _ condition: Bool,
+        transform: (Self) -> Content
+    ) -> some View {
         if condition {
             transform(self)
         } else {
@@ -448,4 +520,6 @@ extension View {
 
 #Preview {
     ContentView()
+        .environmentObject(AppManager())
+        .environmentObject(LLMEvaluator())
 }

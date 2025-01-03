@@ -20,10 +20,22 @@ struct HostedModel: Codable, Hashable, Identifiable {
     }
 }
 
-
+/// Per-thread model selection
 enum ModelSelection: Codable {
     case local(name: String)
     case hosted(model: HostedModel)
+}
+
+/// Convert ModelSelection to a string for `.id(...)`
+extension ModelSelection {
+    var idString: String {
+        switch self {
+        case .local(let name):
+            return "local:\(name)"
+        case .hosted(let hosted):
+            return "hosted:\(hosted.id.uuidString)"
+        }
+    }
 }
 
 class AppManager: ObservableObject {
@@ -34,6 +46,7 @@ class AppManager: ObservableObject {
     @AppStorage("appFontWidth") var appFontWidth: AppFontWidth = .standard
     @AppStorage("shouldPlayHaptics") var shouldPlayHaptics = true
 
+    /// The "global" or "default" model selection (for new chats, etc.)
     @Published var currentModel: ModelSelection? {
         didSet {
             saveCurrentModelToUserDefaults()
@@ -45,15 +58,10 @@ class AppManager: ObservableObject {
     private let currentModelKey = "currentModel"
 
     @Published var installedModels: [String] = [] {
-        didSet {
-            saveInstalledModelsToUserDefaults()
-        }
+        didSet { saveInstalledModelsToUserDefaults() }
     }
-
     @Published var hostedModels: [HostedModel] = [] {
-        didSet {
-            saveHostedModelsToUserDefaults()
-        }
+        didSet { saveHostedModelsToUserDefaults() }
     }
 
     init() {
@@ -62,32 +70,30 @@ class AppManager: ObservableObject {
         loadCurrentModelFromUserDefaults()
     }
 
-    // Add this computed property to get the display name of the current model
     var currentModelNameDisplay: String {
-        if let currentModel = currentModel {
-            switch currentModel {
-            case .local(let name):
-                return modelDisplayName(name)
-            case .hosted(let hostedModel):
-                return hostedModel.name
-            }
-        } else {
-            return ""
+        guard let currentModel = currentModel else { return "" }
+        switch currentModel {
+        case .local(let name):
+            return modelDisplayName(name)
+        case .hosted(let hosted):
+            return hosted.name
         }
     }
+
+    // MARK: - Model Storage
 
     private func saveInstalledModelsToUserDefaults() {
         if let jsonData = try? JSONEncoder().encode(installedModels) {
             UserDefaults.standard.set(jsonData, forKey: installedModelsKey)
         }
     }
-
     private func loadInstalledModelsFromUserDefaults() {
-        if let jsonData = UserDefaults.standard.data(forKey: installedModelsKey),
-           let decodedArray = try? JSONDecoder().decode([String].self, from: jsonData) {
-            self.installedModels = decodedArray
+        if
+            let jsonData = UserDefaults.standard.data(forKey: installedModelsKey),
+            let decoded = try? JSONDecoder().decode([String].self, from: jsonData) {
+            installedModels = decoded
         } else {
-            self.installedModels = []
+            installedModels = []
         }
     }
 
@@ -96,13 +102,13 @@ class AppManager: ObservableObject {
             UserDefaults.standard.set(jsonData, forKey: hostedModelsKey)
         }
     }
-
     private func loadHostedModelsFromUserDefaults() {
-        if let jsonData = UserDefaults.standard.data(forKey: hostedModelsKey),
-           let decodedArray = try? JSONDecoder().decode([HostedModel].self, from: jsonData) {
-            self.hostedModels = decodedArray
+        if
+            let jsonData = UserDefaults.standard.data(forKey: hostedModelsKey),
+            let decoded = try? JSONDecoder().decode([HostedModel].self, from: jsonData) {
+            hostedModels = decoded
         } else {
-            self.hostedModels = []
+            hostedModels = []
         }
     }
 
@@ -111,74 +117,68 @@ class AppManager: ObservableObject {
             UserDefaults.standard.set(data, forKey: currentModelKey)
         }
     }
-
     private func loadCurrentModelFromUserDefaults() {
-        if let data = UserDefaults.standard.data(forKey: currentModelKey),
-           let model = try? JSONDecoder().decode(ModelSelection.self, from: data) {
-            self.currentModel = model
+        if
+            let data = UserDefaults.standard.data(forKey: currentModelKey),
+            let model = try? JSONDecoder().decode(ModelSelection.self, from: data) {
+            currentModel = model
         } else {
-            self.currentModel = nil
+            currentModel = nil
         }
     }
+
+    // MARK: - Helpers
 
     func addInstalledModel(_ model: String) {
         if !installedModels.contains(model) {
             installedModels.append(model)
         }
     }
-
     func addHostedModel(_ model: HostedModel) {
         if !hostedModels.contains(model) {
             hostedModels.append(model)
         }
     }
 
-    func modelDisplayName(_ modelName: String) -> String {
-        return modelName.replacingOccurrences(of: "mlx-community/", with: "").lowercased()
+    func modelDisplayName(_ name: String) -> String {
+        // For example, trim "mlx-community/"
+        name.replacingOccurrences(of: "mlx-community/", with: "").lowercased()
     }
-    
+
     func getMoonPhaseIcon() -> String {
-        // Get current date
         let currentDate = Date()
-        
-        // Define a base date (known new moon date)
         let baseDate = Calendar.current.date(from: DateComponents(year: 2000, month: 1, day: 6))!
-        
-        // Difference in days between the current date and the base date
         let daysSinceBaseDate = Calendar.current.dateComponents([.day], from: baseDate, to: currentDate).day!
-        
-        // Moon phase repeats approximately every 29.53 days
         let moonCycleLength = 29.53
         let daysIntoCycle = Double(daysSinceBaseDate).truncatingRemainder(dividingBy: moonCycleLength)
-        
-        // Determine the phase based on how far into the cycle we are
+
         switch daysIntoCycle {
         case 0..<1.8457:
-            return "moonphase.new.moon" // New Moon
+            return "moonphase.new.moon"
         case 1.8457..<5.536:
-            return "moonphase.waxing.crescent" // Waxing Crescent
+            return "moonphase.waxing.crescent"
         case 5.536..<9.228:
-            return "moonphase.first.quarter" // First Quarter
+            return "moonphase.first.quarter"
         case 9.228..<12.919:
-            return "moonphase.waxing.gibbous" // Waxing Gibbous
+            return "moonphase.waxing.gibbous"
         case 12.919..<16.610:
-            return "moonphase.full.moon" // Full Moon
+            return "moonphase.full.moon"
         case 16.610..<20.302:
-            return "moonphase.waning.gibbous" // Waning Gibbous
+            return "moonphase.waning.gibbous"
         case 20.302..<23.993:
-            return "moonphase.last.quarter" // Last Quarter
+            return "moonphase.last.quarter"
         case 23.993..<27.684:
-            return "moonphase.waning.crescent" // Waning Crescent
+            return "moonphase.waning.crescent"
         default:
-            return "moonphase.new.moon" // New Moon (fallback)
+            return "moonphase.new.moon"
         }
     }
 }
 
+// MARK: - Roles, Messages, Threads
+
 enum Role: String, Codable {
-    case assistant
-    case user
-    case system
+    case assistant, user, system
 }
 
 @Model
@@ -207,8 +207,37 @@ class Thread {
 
     @Relationship var messages: [Message] = []
 
+    // Store the model selection as JSON in a string
+    var storedModelSelection: String?
+
+    // Computed property to read/write the model selection
+    var modelSelection: ModelSelection? {
+        get {
+            guard
+                let json = storedModelSelection,
+                let data = json.data(using: .utf8),
+                let sel = try? JSONDecoder().decode(ModelSelection.self, from: data)
+            else {
+                return nil
+            }
+            return sel
+        }
+        set {
+            guard let newValue = newValue else {
+                storedModelSelection = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(newValue),
+               let json = String(data: data, encoding: .utf8) {
+                storedModelSelection = json
+            } else {
+                storedModelSelection = nil
+            }
+        }
+    }
+
     var sortedMessages: [Message] {
-        return messages.sorted { $0.timestamp < $1.timestamp }
+        messages.sorted { $0.timestamp < $1.timestamp }
     }
 
     init() {
@@ -217,9 +246,10 @@ class Thread {
     }
 }
 
+// MARK: - Appearance Settings
+
 enum AppTintColor: String, CaseIterable {
     case monochrome, blue, brown, gray, green, indigo, mint, orange, pink, purple, red, teal, yellow
-
     func getColor() -> Color {
         switch self {
         case .monochrome:
@@ -254,53 +284,37 @@ enum AppTintColor: String, CaseIterable {
 
 enum AppFontDesign: String, CaseIterable {
     case standard, monospaced, rounded, serif
-
     func getFontDesign() -> Font.Design {
         switch self {
-        case .standard:
-            return .default
-        case .monospaced:
-            return .monospaced
-        case .rounded:
-            return .rounded
-        case .serif:
-            return .serif
+        case .standard: return .default
+        case .monospaced: return .monospaced
+        case .rounded: return .rounded
+        case .serif: return .serif
         }
     }
 }
 
 enum AppFontWidth: String, CaseIterable {
     case compressed, condensed, expanded, standard
-
     func getFontWidth() -> Font.Width {
         switch self {
-        case .compressed:
-            return .compressed
-        case .condensed:
-            return .condensed
-        case .expanded:
-            return .expanded
-        case .standard:
-            return .standard
+        case .compressed: return .compressed
+        case .condensed: return .condensed
+        case .expanded: return .expanded
+        case .standard: return .standard
         }
     }
 }
 
 enum AppFontSize: String, CaseIterable {
     case xsmall, small, medium, large, xlarge
-
     func getFontSize() -> DynamicTypeSize {
         switch self {
-        case .xsmall:
-            return .xSmall
-        case .small:
-            return .small
-        case .medium:
-            return .medium
-        case .large:
-            return .large
-        case .xlarge:
-            return .xLarge
+        case .xsmall: return .xSmall
+        case .small:  return .small
+        case .medium: return .medium
+        case .large:  return .large
+        case .xlarge: return .xLarge
         }
     }
 }

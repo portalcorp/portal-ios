@@ -24,12 +24,12 @@ struct SettingsView: View {
                     NavigationLink(destination: ChatsSettingsView(currentThread: $currentThread)) {
                         Label("chats", systemImage: "message")
                     }
-                    
-                    NavigationLink(destination: ModelsSettingsView()) {
+
+                    // Pass currentThread here:
+                    NavigationLink(destination: ModelsSettingsView(currentThread: $currentThread)) {
                         Label("models", systemImage: "arrow.down.circle")
                             .badge(truncatedModelName(appManager.currentModelNameDisplay))
                     }
-
                 }
                 
                 Section {
@@ -75,7 +75,8 @@ extension SettingsView {
     }
 }
 
-
 #Preview {
     SettingsView(currentThread: .constant(nil))
+        .environmentObject(AppManager())
+        .environmentObject(LLMEvaluator())
 }
