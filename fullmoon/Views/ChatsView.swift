@@ -23,9 +23,9 @@ struct ChatsView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if filteredThreads.count == 0 {
+                if filteredThreads.isEmpty {
                     ContentUnavailableView {
-                        Label(threads.count == 0 ? "no chats yet" : "no results", systemImage: "message")
+                        Label(threads.isEmpty ? "no chats yet" : "no results", systemImage: "message")
                     }
                 } else {
                     List {
@@ -100,28 +100,22 @@ struct ChatsView: View {
         for offset in offsets {
             let thread = threads[offset]
             
-            if let currentThread = currentThread {
-                if currentThread.id == thread.id {
-                    setCurrentThread()
-                }
+            // If user is currently on this thread, clear it out
+            if currentThread?.id == thread.id {
+                setCurrentThread(nil)
             }
             
             modelContext.delete(thread)
         }
     }
 
-    @AppStorage("lastThreadId") private var lastThreadId: String = ""
+    // removed @AppStorage("lastThreadId") usage for simplicity
     
-    private func setCurrentThread(_ thread: Thread? = nil) {
-    currentThread = thread
-    // Save the thread ID so next time we open the app, we come back to this one
-    if let thread {
-        lastThreadId = thread.id.uuidString
-    } else {
-        lastThreadId = ""
-    }
-    isPromptFocused = true
-    dismiss()
+    private func setCurrentThread(_ thread: Thread?) {
+        currentThread = thread
+        // No need to save any "lastThreadId". We simply pick the thread in memory.
+        isPromptFocused = true
+        dismiss()
     }
 }
 

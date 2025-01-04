@@ -42,8 +42,8 @@ struct ContentView: View {
     @State private var selectedPhotoItem: PhotosPickerItem? = nil
     @State private var selectedUIImage: UIImage? = nil
 
-    // To remember which thread was last used, so we can restore it on next launch
-    @AppStorage("lastThreadId") private var lastThreadId: String = ""
+    // We no longer auto-restore last thread on launch
+    // (Removed @AppStorage("lastThreadId") for a clean empty chat on first open)
 
     var body: some View {
         NavigationStack {
@@ -51,10 +51,9 @@ struct ContentView: View {
                 content(geometry: geometry)
                     .id(currentThread?.modelSelection?.idString ?? "none")
                     .task {
-                        // Only load thread if we currently have none
-                        if currentThread == nil {
-                            await loadOrCreateThread()
-                        }
+                        // On first load, do NOT auto-load a thread.
+                        // Instead, show an empty chat. No new Thread is created here.
+                        currentThread = nil
                     }
                     .gesture(
                         DragGesture()
@@ -104,7 +103,6 @@ struct ContentView: View {
                     .environment(\.dynamicTypeSize, appManager.appFontSize.getFontSize())
                     .fontWidth(appManager.appFontWidth.getFontWidth())
             }
-            // Instead of .toolbarRole(.editor), omit or use .toolbarRole(.automatic) to ensure the top bar stays visible.
             .navigationBarTitleDisplayMode(.inline)
             .toolbarRole(.automatic)
             .toolbar {
@@ -117,12 +115,10 @@ struct ContentView: View {
                             .truncationMode(.tail)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            // A small translucent background
                             .background(
                                 Color(uiColor: .secondarySystemFill).opacity(0.4)
                             )
                             .cornerRadius(8)
-                            // Use white color for the text
                             .foregroundColor(.white)
                     }
                 }
@@ -215,6 +211,7 @@ struct ContentView: View {
             if let currentThread = currentThread {
                 chatScrollView(currentThread: currentThread)
             } else {
+                // Empty chat placeholder
                 Spacer()
                 Image(systemName: appManager.getMoonPhaseIcon())
                     .resizable()
@@ -404,7 +401,7 @@ struct ContentView: View {
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let uiImage = UIImage(data: data) {
                     selectedUIImage = uiImage
-                    // If no thread yet, create one
+                    // Only create a thread if the user is actually sending something:
                     if currentThread == nil {
                         let newThread = Thread()
                         newThread.modelSelection = appManager.currentModel
@@ -421,52 +418,17 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Thread initialization
-    private func loadOrCreateThread() async {
-        // 1) Attempt to restore from lastThreadId
-        if let uuid = UUID(uuidString: lastThreadId),
-           let foundThread = threads.first(where: { $0.id == uuid }) {
-            currentThread = foundThread
-        }
-        else if let firstThread = threads.first {
-            // 2) If no lastThread found, pick the first thread
-            currentThread = firstThread
-        }
-        else {
-            // 3) If no threads exist, do nothing for now. We'll create on first message.
-            currentThread = nil
-        }
-
-        // 4) If we have a thread with a selected model, try loading it
-        if let modelSel = currentThread?.modelSelection {
-            print("[ContentView] Attempting to load thread's model on appear: \(modelSel)")
-            try? await llm.load(modelSelection: modelSel)
-        }
-
-        // 5) Force a small toggle so SwiftUI sees the updated thread
-        forceRefreshThread()
-    }
-
-    private func forceRefreshThread() {
-        let temp = currentThread
-        currentThread = nil
-        DispatchQueue.main.async {
-            currentThread = temp
-        }
-    }
-
     // MARK: - Title, new chat, generating text
 
     private var chatTitle: String {
         guard let sel = currentThread?.modelSelection else {
-            // If no thread or no model, fallback to global
+            // If no thread, fallback to global or "fullmoon"
             if let fallback = appManager.currentModel {
                 switch fallback {
                 case .local(let name): return appManager.modelDisplayName(name)
                 case .hosted(let hosted): return hosted.name
                 }
             }
-            // Otherwise show "fullmoon"
             return "fullmoon"
         }
         switch sel {
@@ -477,7 +439,6 @@ struct ContentView: View {
         }
     }
 
-    // We'll just set currentThread = nil when the user wants a new chat
     private func createNewChat() {
         currentThread = nil
         isPromptFocused = true
@@ -486,7 +447,7 @@ struct ContentView: View {
     private func generate() {
         guard !prompt.isEmpty else { return }
 
-        // If there's no current thread, create & store one with the appManager's model
+        // Only create/save a Thread once the user actually sends a message
         if currentThread == nil {
             let newThread = Thread()
             newThread.modelSelection = appManager.currentModel
