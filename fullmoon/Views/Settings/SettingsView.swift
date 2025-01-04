@@ -24,12 +24,14 @@ struct SettingsView: View {
                     NavigationLink(destination: ChatsSettingsView(currentThread: $currentThread)) {
                         Label("chats", systemImage: "message")
                     }
-
-                    // Pass currentThread here:
+                    
+                    // [REMOVED] The "models" link, now accessible via chat title.
+                    /*
                     NavigationLink(destination: ModelsSettingsView(currentThread: $currentThread)) {
                         Label("models", systemImage: "arrow.down.circle")
                             .badge(truncatedModelName(appManager.currentModelNameDisplay))
                     }
+                    */
                 }
                 
                 Section {

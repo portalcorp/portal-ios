@@ -16,6 +16,9 @@ struct ChatsView: View {
     @Environment(\.modelContext) var modelContext
     @Query(sort: \Thread.timestamp, order: .reverse) var threads: [Thread]
     @State var search = ""
+    @State var showSettings = false
+    @EnvironmentObject var llm: LLMEvaluator
+    private var idiom: UIUserInterfaceIdiom { UIDevice.current.userInterfaceIdiom }
     
     var body: some View {
         NavigationStack {
@@ -66,14 +69,23 @@ struct ChatsView: View {
                 }
                 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { setCurrentThread() }) {
-                        Image(systemName: "plus")
+                    Button(action: { showSettings.toggle() }) {
+                        Image(systemName: "gear")
                     }
                 }
             }
         }
         .tint(appManager.appTintColor.getColor())
         .environment(\.dynamicTypeSize, appManager.appFontSize.getFontSize())
+        .sheet(isPresented: $showSettings) {
+            SettingsView(currentThread: $currentThread)
+                .environmentObject(appManager)
+                .environmentObject(llm)
+                .presentationDragIndicator(.hidden)
+                .if(idiom == .phone) { view in
+                    view.presentationDetents([.medium])
+                }
+        }
     }
     
     var filteredThreads: [Thread] {

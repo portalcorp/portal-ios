@@ -26,6 +26,9 @@ struct ContentView: View {
     @State var showChats = false
     @State var prompt = ""
     @FocusState var isPromptFocused: Bool
+    
+    // For model selector
+    @State var showModelSelector = false
 
     // The current open thread
     @State var currentThread: Thread?
@@ -56,12 +59,14 @@ struct ContentView: View {
                     .gesture(
                         DragGesture()
                             .onChanged { gesture in
+                                // Swipe to reveal Chats
                                 if !showChats && gesture.startLocation.x < 20 && gesture.translation.width > 100 {
                                     playHaptic()
                                     showChats = true
                                 }
                             }
                     )
+                    // Chats sheet
                     .sheet(isPresented: $showChats) {
                         ChatsView(currentThread: $currentThread, isPromptFocused: $isPromptFocused)
                             .environmentObject(appManager)
@@ -70,6 +75,7 @@ struct ContentView: View {
                                 view.presentationDetents([.medium, .large])
                             }
                     }
+                    // Settings sheet
                     .sheet(isPresented: $showSettings) {
                         SettingsView(currentThread: $currentThread)
                             .environmentObject(appManager)
@@ -79,15 +85,67 @@ struct ContentView: View {
                                 view.presentationDetents([.medium])
                             }
                     }
+                    // Model selector sheet
+                    .sheet(isPresented: $showModelSelector) {
+                        ModelsSettingsView(currentThread: $currentThread)
+                            .environmentObject(appManager)
+                            .environmentObject(llm)
+                            .presentationDetents([.medium, .large])
+                    }
+                    // Onboarding sheet
                     .sheet(isPresented: $showOnboarding, onDismiss: dismissOnboarding) {
                         OnboardingView(showOnboarding: $showOnboarding)
                             .environment(llm)
                             .interactiveDismissDisabled(false)
                     }
+                    // Keep your global .tint() to style links, toggles, etc.
                     .tint(appManager.appTintColor.getColor())
                     .fontDesign(appManager.appFontDesign.getFontDesign())
                     .environment(\.dynamicTypeSize, appManager.appFontSize.getFontSize())
                     .fontWidth(appManager.appFontWidth.getFontWidth())
+            }
+            // Instead of .toolbarRole(.editor), omit or use .toolbarRole(.automatic) to ensure the top bar stays visible.
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarRole(.automatic)
+            .toolbar {
+                // Chat title button with a translucent background
+                ToolbarItem(placement: .principal) {
+                    Button(action: { showModelSelector.toggle() }) {
+                        Text(chatTitle)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            // A small translucent background
+                            .background(
+                                Color(uiColor: .secondarySystemFill).opacity(0.4)
+                            )
+                            .cornerRadius(8)
+                            // Use white color for the text
+                            .foregroundColor(.white)
+                    }
+                }
+
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        playHaptic()
+                        showChats.toggle()
+                    } label: {
+                        Image(systemName: "list.bullet")
+                            .foregroundColor(appManager.appTintColor.getColor())
+                    }
+                }
+                
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        playHaptic()
+                        createNewChat()
+                    } label: {
+                        Image(systemName: "plus")
+                            .foregroundColor(appManager.appTintColor.getColor())
+                    }
+                }
             }
         }
     }
@@ -99,35 +157,6 @@ struct ContentView: View {
         ZStack {
             animatedBackground
             mainContent(geometry: geometry)
-        }
-        .navigationTitle(chatTitle)
-        .toolbarRole(.editor)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    playHaptic()
-                    showChats.toggle()
-                } label: {
-                    Image(systemName: "list.bullet")
-                }
-            }
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    playHaptic()
-                    createNewChat()
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    playHaptic()
-                    showSettings.toggle()
-                } label: {
-                    Image(systemName: "gear")
-                }
-            }
         }
     }
 
@@ -317,7 +346,6 @@ struct ContentView: View {
                             }
                     )
             }
-            // If user actually picks an image, we do create/insert a new thread if needed:
             .onChange(of: selectedPhotoItem) { newItem in
                 handleSelectedPhotoItem(newItem)
             }
@@ -350,6 +378,7 @@ struct ContentView: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 24, height: 24)
                             .offset(x: 2.5)
+                            .foregroundColor(appManager.appTintColor.getColor())
                     }
                     .disabled(llm.running || prompt.isEmpty)
                     .padding(.trailing)
@@ -430,7 +459,7 @@ struct ContentView: View {
 
     private var chatTitle: String {
         guard let sel = currentThread?.modelSelection else {
-            // If no thread or no model, fallback to global if we want:
+            // If no thread or no model, fallback to global
             if let fallback = appManager.currentModel {
                 switch fallback {
                 case .local(let name): return appManager.modelDisplayName(name)
@@ -448,7 +477,7 @@ struct ContentView: View {
         }
     }
 
-    // [UPDATED] Do not create a thread; just set currentThread = nil
+    // We'll just set currentThread = nil when the user wants a new chat
     private func createNewChat() {
         currentThread = nil
         isPromptFocused = true
